@@ -19,8 +19,10 @@ env:
   TASK_FAMILY: capstone-url-shortener
 
 jobs:
-  deploy:
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.build.outputs.image }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,7 +50,8 @@ jobs:
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push image (tagged by commit SHA)
+      - name: Build and push image (SHA tagged)
+        id: build
         working-directory: app
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
@@ -56,20 +59,33 @@ jobs:
           IMAGE="$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}"
           docker build -t "$IMAGE" .
           docker push "$IMAGE"
-          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
 
-      - name: Update ECS task definition with new image
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production          # <-- THIS triggers the manual approval gate
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::320408143639:role/capstone-github-actions
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy new image to ECS
+        env:
+          IMAGE: ${{ needs.build.outputs.image }}
         run: |
           aws ecs describe-task-definition --task-definition $TASK_FAMILY \
             --query 'taskDefinition' --output json > taskdef.json
 
           python3 - << 'PY'
-          import json
+          import json, os
           d = json.load(open("taskdef.json"))
           for k in ["taskDefinitionArn","revision","status","requiresAttributes",
                     "compatibilities","registeredAt","registeredBy"]:
               d.pop(k, None)
-          d["containerDefinitions"][0]["image"] = "${{ env.IMAGE }}"
+          d["containerDefinitions"][0]["image"] = os.environ["IMAGE"]
           json.dump(d, open("taskdef-new.json","w"))
           PY
 
