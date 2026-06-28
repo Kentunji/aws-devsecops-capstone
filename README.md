@@ -1,118 +1,129 @@
-# AWS DevSecOps Capstone — Production-Grade URL Shortener
+# AWS DevSecOps Capstone — URL Shortener
 
-A fully automated, reproducible AWS deployment of a real application, provisioned
-entirely as code with Terraform and shipped through a secure CI/CD pipeline.
+A production-grade, fully reproducible AWS deployment of a real application, provisioned
+entirely as code with Terraform and shipped through a secure CI/CD pipeline with a
+manual production approval gate.
 
-This project ties together the full DevSecOps stack: multi-AZ networking, container
-orchestration, a managed database with secrets handled correctly, keyless CI/CD,
-zero-downtime blue/green deployments, observability, a CDN with HTTPS, and scheduled
-serverless automation — all tear-down-and-rebuild reproducible.
+![Architecture](architecture.png)
 
 ---
 
-## The application
+## What this is
 
-A small **URL shortener**: submit a long URL, get back a short code; visiting the
-short code redirects to the original. Deliberately simple in code so the
-**infrastructure** is the focus — but real enough that every AWS component earns
-its place (it genuinely needs a database, a static front-end, an API, and cleanup).
+A **URL shortener** API: submit a long URL, receive a short code; visiting the code
+redirects to the original. The application is deliberately small so the **infrastructure
+and delivery pipeline** are the focus — but it is real enough that every component earns
+its place (it needs a database, a private network, an API, and automated delivery).
+
+Live request path: `Users → HTTPS → ALB (public subnets) → ECS Fargate (private subnets) → PostgreSQL`
+
+---
+
+## Highlights
+
+- **Infrastructure as Code** — the entire environment is defined in Terraform and can be
+  destroyed and rebuilt identically on demand.
+- **Keyless CI/CD** — GitHub Actions authenticates to AWS via OIDC, assuming a
+  least-privilege IAM role scoped to this repository. No long-lived AWS keys are stored
+  anywhere.
+- **Secrets handled correctly** — the database password is generated automatically, stored
+  in AWS Secrets Manager, and injected into the container at runtime. It never appears in
+  the source code or in version control.
+- **Manual production approval gate** — code is built and tested automatically on push,
+  then waits for explicit human approval (a GitHub Environment with required reviewers)
+  before deploying to production.
+- **Immutable, traceable images** — every build is tagged with its git commit SHA, so the
+  running version is always traceable to an exact commit and deployments are deterministic.
+- **Secure remote state** — Terraform state lives in an encrypted, versioned, private S3
+  bucket with state locking, rather than on a local disk.
+- **Defence in depth** — application tasks and the database run in private subnets with no
+  inbound internet access; only the load balancer is public, and security groups restrict
+  traffic to the minimum required path.
 
 ---
 
 ## Architecture
 
+| Layer | Component | Purpose |
+|-------|-----------|---------|
+| Network | VPC, 2 public + 2 private subnets across 2 AZs, IGW, NAT | Multi-AZ isolation; public front door, private workloads |
+| Compute | ECS Fargate service behind an Application Load Balancer | Runs the containerised API; ALB is the single public entry point |
+| Data | RDS PostgreSQL in private subnets | Persists the short-code to URL mappings |
+| Secrets | AWS Secrets Manager | Stores the DB password; injected into the task at runtime |
+| CI/CD | GitHub Actions + OIDC + ECR | Build, test, and deploy on push with no stored credentials |
+| Governance | GitHub Environment with required reviewers | Manual approval before production deploys |
+| State | S3 (encrypted, versioned, locked) | Secure, shared Terraform state |
+| Observability | CloudWatch Logs | Container log aggregation |
+
+---
+
+## CI/CD pipeline
+
+On every push to `main` that touches the application:
+
+1. **Test** — runs the unit tests. A failure stops the pipeline; nothing is deployed.
+2. **Authenticate** — assumes the deployment IAM role via OIDC (keyless).
+3. **Build & push** — builds the Docker image, tags it with the commit SHA, pushes to ECR.
+4. **Approval gate** — the deploy job pauses and waits for a reviewer to approve in GitHub.
+5. **Deploy** — registers a new ECS task definition with the new image and updates the
+   service.
+
 ```
-                          ┌─────────────────────────┐
-        Users  ──HTTPS──> │  CloudFront (CDN + TLS)  │
-                          └───────────┬─────────────┘
-                                      │ static page (HTML/JS form)
-                          ┌───────────▼─────────────┐
-                          │   S3 (static assets)     │
-                          └─────────────────────────┘
-                                      │ API calls (create / redirect)
-                          ┌───────────▼─────────────┐
-                          │   ALB (public subnets)   │
-                          └───────────┬─────────────┘
-                                      │
-                          ┌───────────▼─────────────┐
-                          │  ECS Fargate (private)   │  ← Flask API, blue/green
-                          └───────────┬─────────────┘
-                                      │ reads/writes
-                          ┌───────────▼─────────────┐
-                          │  RDS PostgreSQL (private)│  ← password in Secrets Manager
-                          └─────────────────────────┘
-
-   Scheduled Lambda ──> cleans up expired links / backups (EventBridge cron)
-   CloudWatch ──> dashboards + alarms ──> SNS notifications
-   GitHub Actions ──OIDC──> build → test → deploy (no stored credentials)
+git push → test → build (SHA tag) → push to ECR → [⏸ approve] → deploy to ECS
 ```
 
 ---
 
-## Requirements checklist
+## Security decisions
 
-- [ ] VPC (multi-AZ, public/private subnets) — Terraform
-- [ ] App on ECS Fargate behind an ALB
-- [ ] RDS database in private subnets, password in Secrets Manager
-- [ ] CI/CD pipeline (GitHub Actions) using OIDC: build → test → deploy on push
-- [ ] Blue/green deployment with automatic rollback
-- [ ] CloudWatch dashboards + alarms → SNS alerts
-- [ ] CloudFront + S3 for static assets, HTTPS via CloudFront/ACM
-- [ ] Scheduled Lambda doing backups/cleanup
-- [ ] Fully reproducible: `terraform destroy` then `terraform apply` rebuilds everything
-
----
-
-## Build plan (layered)
-
-Built incrementally, each layer a working, committed milestone:
-
-| Layer | Component | Status |
-|-------|-----------|--------|
-| 1 | VPC — multi-AZ, public/private subnets, NAT | in progress |
-| 2 | ECS Fargate + ALB + the app | todo |
-| 3 | RDS PostgreSQL + Secrets Manager | todo |
-| 4 | CI/CD pipeline (OIDC) + blue/green | todo |
-| 5 | CloudWatch dashboards + alarms + SNS | todo |
-| 6 | CloudFront + S3 + HTTPS | todo |
-| 7 | Scheduled Lambda (cleanup/backup) | todo |
-| 8 | Reproducibility verification + docs | todo |
-
----
-
-## Security highlights
-
-- **No long-lived credentials anywhere** — CI/CD authenticates to AWS via GitHub OIDC,
-  assuming a least-privilege IAM role scoped to this repository.
-- **Database password never in code** — generated and stored in AWS Secrets Manager,
-  injected into the container at runtime.
-- **Defence in depth** — database and application tasks live in private subnets with
-  no inbound internet access; only the ALB is public, and security groups restrict
-  traffic to the minimum required path.
-- **HTTPS everywhere** at the edge via CloudFront.
-
----
-
-## Tech stack
-
-Terraform · AWS (VPC, ECS Fargate, ALB, RDS, Secrets Manager, CloudFront, S3, ACM,
-Lambda, EventBridge, CloudWatch, SNS, ECR, IAM) · GitHub Actions · Docker · Python/Flask
+- **OIDC over access keys.** The pipeline never holds AWS credentials. GitHub presents a
+  short-lived OIDC token; AWS exchanges it for temporary credentials via an IAM role whose
+  trust policy is locked to this repository.
+- **Secrets Manager over plaintext.** The database password is never written by a human and
+  never stored in code or state in plaintext that is exposed. ECS reads it from Secrets
+  Manager and injects it as an environment variable at container start.
+- **Private-by-default networking.** Only the ALB is internet-facing. ECS tasks and RDS sit
+  in private subnets, reach out via NAT only for image pulls, and are unreachable from the
+  internet directly.
+- **Least-privilege IAM.** The deployment role is granted only the ECR and ECS actions it
+  needs, scoped to this project's resources where possible.
+- **Encrypted, private state.** Terraform state — which can contain sensitive attributes —
+  is stored in an encrypted S3 bucket with public access fully blocked and versioning
+  enabled for recovery.
 
 ---
 
 ## Reproducibility
 
-The entire stack is defined in Terraform. To stand it up or tear it down:
+The whole environment is code. To stand it up or tear it down:
 
 ```bash
 cd terraform
-terraform init
-terraform apply     # builds the whole environment
-terraform destroy   # removes everything, stops all billing
+terraform init      # connects to the S3 backend
+terraform apply     # builds the entire environment
+terraform destroy   # removes everything, stopping all billing
 ```
 
-This is the core proof of the project: the environment can be destroyed and rebuilt
-from code, identically, on demand.
+State persists in S3 between sessions, so the environment can be destroyed to save cost and
+rebuilt later, identically, from the same code.
+
+---
+
+## Tech stack
+
+Terraform · AWS (VPC, ECS Fargate, ALB, RDS PostgreSQL, Secrets Manager, ECR, S3, IAM,
+CloudWatch) · GitHub Actions (OIDC) · Docker · Python / Flask
+
+---
+
+## Status & roadmap
+
+Implemented: multi-AZ VPC, ECS Fargate + ALB, RDS + Secrets Manager, OIDC CI/CD with SHA
+tagging and a manual production approval gate, encrypted remote state.
+
+Planned enhancements: blue/green deployment with automatic rollback on failed health
+checks; CloudWatch dashboards and alarms wired to SNS; CloudFront + S3 static front-end
+with HTTPS; a scheduled Lambda for cleanup of expired links.
 
 ---
 
