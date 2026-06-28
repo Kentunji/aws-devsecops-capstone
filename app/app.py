@@ -11,7 +11,7 @@ def make_code(n=6):
 
 @app.route("/")
 def home():
-    return jsonify(message="URL Shortener API", version="2.0", endpoints=["/shorten", "/health"])
+    return jsonify(message="URL Shortener API", version="3.0", endpoints=["/shorten", "/health"])
 
 @app.route("/health")
 def health():
