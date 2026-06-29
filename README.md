@@ -73,6 +73,18 @@ git push → test → build (SHA tag) → push to ECR → [⏸ approve] → blue
 ```
 
 ---
+## Pipeline in action
+
+![CI/CD pipeline runs](screenshots/pipeline-history.png)
+
+Every push runs through build, test, manual approval, and a blue/green deployment.
+Run #7 above is a deliberate failure test: a broken health check was pushed, and
+CodeDeploy refused to shift traffic to the unhealthy version, automatically rolling
+back and keeping the previous version live with no downtime. Run #8 restored the
+healthy version.
+
+---
+
 
 ## Security decisions
 
