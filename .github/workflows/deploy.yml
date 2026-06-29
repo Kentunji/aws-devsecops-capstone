@@ -17,6 +17,8 @@ env:
   ECS_CLUSTER: capstone-cluster
   ECS_SERVICE: capstone-service
   TASK_FAMILY: capstone-url-shortener
+  CODEDEPLOY_APP: capstone-app
+  CODEDEPLOY_GROUP: capstone-dg
 
 jobs:
   build:
@@ -66,16 +68,21 @@ jobs:
     runs-on: ubuntu-latest
     environment: production          # <-- THIS triggers the manual approval gate
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::320408143639:role/capstone-github-actions
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy new image to ECS
+      - name: Register new task definition
+        id: taskdef
         env:
           IMAGE: ${{ needs.build.outputs.image }}
         run: |
+          # Base the new revision on the currently-deployed task def
           aws ecs describe-task-definition --task-definition $TASK_FAMILY \
             --query 'taskDefinition' --output json > taskdef.json
 
@@ -93,6 +100,25 @@ jobs:
             --cli-input-json file://taskdef-new.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "Registered: $NEW_ARN"
+          echo "task_arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
 
-          aws ecs update-service --cluster $ECS_CLUSTER --service $ECS_SERVICE \
-            --task-definition "$NEW_ARN"
+      - name: Trigger CodeDeploy blue/green deployment
+        env:
+          TASK_ARN: ${{ steps.taskdef.outputs.task_arn }}
+        run: |
+          # Render appspec.yaml with the freshly-registered task definition ARN.
+          # CodeDeploy reads the ContainerName/Port from this revision and shifts
+          # traffic to the green target group, rolling back on failure.
+          APPSPEC=$(sed "s#<TASK_DEFINITION>#$TASK_ARN#g" appspec.yaml)
+          REVISION=$(jq -n --arg content "$APPSPEC" \
+            '{revisionType:"AppSpecContent", appSpecContent:{content:$content}}')
+
+          DEPLOY_ID=$(aws deploy create-deployment \
+            --application-name "$CODEDEPLOY_APP" \
+            --deployment-group-name "$CODEDEPLOY_GROUP" \
+            --revision "$REVISION" \
+            --query 'deploymentId' --output text)
+          echo "Started CodeDeploy deployment: $DEPLOY_ID"
+
+          aws deploy wait deployment-successful --deployment-id "$DEPLOY_ID"
+          echo "Deployment $DEPLOY_ID succeeded."

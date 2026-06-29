@@ -50,9 +50,9 @@ resource "aws_ecs_task_definition" "app" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
 
   container_definitions = jsonencode([{
-    name      = "app"
-    image     = "${aws_ecr_repository.app.repository_url}:latest"
-    essential = true
+    name         = "app"
+    image        = "${aws_ecr_repository.app.repository_url}:latest"
+    essential    = true
     portMappings = [{ containerPort = 8080, protocol = "tcp" }]
 
     environment = [
@@ -90,10 +90,20 @@ resource "aws_ecs_service" "app" {
     assign_public_ip = false
   }
 
+  deployment_controller {
+    type = "CODE_DEPLOY"
+  }
+
   load_balancer {
     target_group_arn = aws_lb_target_group.app.arn
     container_name   = "app"
     container_port   = 8080
+  }
+
+  # CodeDeploy owns task definition rollouts and the active target group
+  # after the first apply; Terraform must not revert its changes.
+  lifecycle {
+    ignore_changes = [task_definition, load_balancer]
   }
 
   depends_on = [aws_lb_listener.http]

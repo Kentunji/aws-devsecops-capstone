@@ -32,22 +32,22 @@ resource "aws_db_instance" "main" {
   identifier     = "capstone-db"
   engine         = "postgres"
   engine_version = "16.4"
-  instance_class = "db.t3.micro"   # free-tier eligible
+  instance_class = "db.t3.micro" # free-tier eligible
 
   allocated_storage = 20
   storage_type      = "gp3"
-  storage_encrypted = true          # encryption at rest (security)
+  storage_encrypted = true # encryption at rest (security)
 
   db_name  = "urlshortener"
   username = "appuser"
-  password = random_password.db.result   # from Secrets Manager-stored random pw
+  password = random_password.db.result # from Secrets Manager-stored random pw
 
   db_subnet_group_name   = aws_db_subnet_group.main.name
   vpc_security_group_ids = [aws_security_group.rds.id]
 
-  publicly_accessible = false        # NEVER reachable from internet
-  skip_final_snapshot = true         # no snapshot on destroy (lab convenience)
-  deletion_protection = false        # allow terraform destroy
+  publicly_accessible = false # NEVER reachable from internet
+  skip_final_snapshot = true  # no snapshot on destroy (lab convenience)
+  deletion_protection = false # allow terraform destroy
 
   tags = { Name = "capstone-db" }
 }
