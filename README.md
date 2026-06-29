@@ -69,7 +69,7 @@ On every push to `main` that touches the application:
    service.
 
 ```
-git push → test → build (SHA tag) → push to ECR → [⏸ approve] → deploy to ECS
+git push → test → build (SHA tag) → push to ECR → [⏸ approve] → blue/green deploy → auto-rollback if unhealthy
 ```
 
 ---
@@ -119,11 +119,13 @@ CloudWatch) · GitHub Actions (OIDC) · Docker · Python / Flask
 ## Status & roadmap
 
 Implemented: multi-AZ VPC, ECS Fargate + ALB, RDS + Secrets Manager, OIDC CI/CD with SHA
-tagging and a manual production approval gate, encrypted remote state.
+tagging, a manual production approval gate, blue/green deployment via CodeDeploy with
+automatic rollback on failed health checks, and encrypted remote state. The rollback path
+was verified by deploying a deliberately failing health check and confirming traffic
+remained on the healthy version with no downtime.
 
-Planned enhancements: blue/green deployment with automatic rollback on failed health
-checks; CloudWatch dashboards and alarms wired to SNS; CloudFront + S3 static front-end
-with HTTPS; a scheduled Lambda for cleanup of expired links.
+Planned enhancements: CloudWatch dashboards and alarms wired to SNS; CloudFront + S3 static
+front-end with HTTPS; a scheduled Lambda for cleanup of expired links.
 
 ---
 
