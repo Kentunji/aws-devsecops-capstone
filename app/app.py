@@ -15,7 +15,7 @@ def home():
 
 @app.route("/health")
 def health():
-    return jsonify(status="broken"), 500
+    return jsonify(status="healthy"), 200
 
 @app.route("/shorten", methods=["POST"])
 def shorten():
